@@ -24,7 +24,7 @@ final class PCA_Membership {
 		add_action( 'admin_post_pca_reject', array( __CLASS__, 'handle_reject' ) );
 		add_action( 'admin_menu', array( __CLASS__, 'settings_menu' ) );
 		add_action( 'template_redirect', array( __CLASS__, 'render_certificate' ) );
-		add_action( 'forminator_custom_form_after_save_entry', array( __CLASS__, 'capture_application' ), 10, 2 );
+		add_action( 'load-edit.php', array( __CLASS__, 'maybe_sync' ) );
 		add_shortcode( 'pca_members', array( __CLASS__, 'sc_members' ) );
 		add_shortcode( 'pca_verify', array( __CLASS__, 'sc_verify' ) );
 	}
@@ -268,28 +268,69 @@ try{new QRCode(document.getElementById('qr'),{text:<?php echo wp_json_encode( $v
 
 	/* ---------- Applications ---------- */
 
-	public static function capture_application( $form_id, $response ) {
-		$only = (int) get_option( 'pca_join_form_id', 810 );
-		if ( $only && (int) $form_id !== $only ) {
+	/** Reads a mapped value out of a Forminator entry; supports sub-fields like address-1-street_address. */
+	private static function entry_value( $meta, $field_key ) {
+		if ( ! $field_key || in_array( $field_key, array( 'text-4', 'text-5' ), true ) ) {
+			return '';
+		}
+		$sub  = '';
+		$base = $field_key;
+		if ( preg_match( '/^([a-z]+-\d+)-(.+)$/', $field_key, $m ) ) {
+			$base = $m[1];
+			$sub  = $m[2];
+		}
+		if ( ! isset( $meta[ $base ] ) ) {
+			return '';
+		}
+		$v = is_array( $meta[ $base ] ) && array_key_exists( 'value', $meta[ $base ] ) ? $meta[ $base ]['value'] : $meta[ $base ];
+		if ( is_array( $v ) ) {
+			$v = ( $sub && isset( $v[ $sub ] ) ) ? $v[ $sub ] : implode( ' ', array_filter( array_map( 'strval', array_filter( $v, 'is_scalar' ) ) ) );
+		}
+		return sanitize_text_field( (string) $v );
+	}
+
+	/** Imports new join-form entries (from Forminator's own API) as pending applications. Runs when the queue is opened. */
+	public static function sync_applications() {
+		if ( ! class_exists( 'Forminator_API' ) || ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
-		if ( is_array( $response ) && isset( $response['success'] ) && ! $response['success'] ) {
+		$form_id = (int) get_option( 'pca_join_form_id', 810 );
+		$since   = (string) get_option( 'pca_sync_since', '2026-10-06 00:00:00' );
+		$entries = Forminator_API::get_entries( $form_id );
+		if ( is_wp_error( $entries ) || ! is_array( $entries ) ) {
 			return;
 		}
-		$map  = self::field_map();
-		$data = array();
-		foreach ( $map as $name => $field_key ) {
-			// Only explicitly mapped fields are ever stored; passwords (text-4/text-5) are never mapped.
-			$data[ $name ] = ( $field_key && isset( $_POST[ $field_key ] ) && ! is_array( $_POST[ $field_key ] ) ) ? sanitize_text_field( wp_unslash( $_POST[ $field_key ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		$map = self::field_map();
+		foreach ( $entries as $entry ) {
+			$eid = (int) $entry->entry_id;
+			if ( ! empty( $entry->date_created_sql ) && $entry->date_created_sql < $since ) {
+				continue;
+			}
+			if ( get_posts( array( 'post_type' => self::APP, 'post_status' => 'any', 'posts_per_page' => 1, 'fields' => 'ids', 'meta_key' => 'entry_id', 'meta_value' => $eid ) ) ) {
+				continue;
+			}
+			$meta = (array) $entry->meta_data;
+			$data = array();
+			foreach ( $map as $name => $field_key ) {
+				// Only explicitly mapped fields are ever stored; the password fields are never read.
+				$data[ $name ] = self::entry_value( $meta, $field_key );
+			}
+			$title = $data['company'] ?: ( $data['applicant'] ?: 'Entry #' . $eid );
+			$id    = wp_insert_post( array( 'post_type' => self::APP, 'post_title' => $title, 'post_status' => 'publish' ) );
+			if ( is_wp_error( $id ) ) {
+				continue;
+			}
+			update_post_meta( $id, 'entry_id', $eid );
+			update_post_meta( $id, 'data', $data );
+			update_post_meta( $id, 'review', 'pending' );
+			update_post_meta( $id, 'checks', self::run_checks( $data, $id ) );
 		}
-		$title = $data['company'] ?: ( $data['applicant'] ?: 'Application ' . current_time( 'Y-m-d H:i' ) );
-		$id    = wp_insert_post( array( 'post_type' => self::APP, 'post_title' => $title, 'post_status' => 'publish' ) );
-		if ( is_wp_error( $id ) ) {
-			return;
+	}
+
+	public static function maybe_sync() {
+		if ( isset( $_GET['post_type'] ) && self::APP === $_GET['post_type'] ) { // phpcs:ignore WordPress.Security.NonceVerification
+			self::sync_applications();
 		}
-		update_post_meta( $id, 'data', $data );
-		update_post_meta( $id, 'review', 'pending' );
-		update_post_meta( $id, 'checks', self::run_checks( $data, $id ) );
 	}
 
 	/** Maps our names to Forminator field keys. Editable in PCA Members > Settings. */
