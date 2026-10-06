@@ -269,26 +269,18 @@ try{new QRCode(document.getElementById('qr'),{text:<?php echo wp_json_encode( $v
 	/* ---------- Applications ---------- */
 
 	public static function capture_application( $form_id, $response ) {
-		$only = (int) get_option( 'pca_join_form_id', 0 );
+		$only = (int) get_option( 'pca_join_form_id', 810 );
 		if ( $only && (int) $form_id !== $only ) {
 			return;
 		}
 		if ( is_array( $response ) && isset( $response['success'] ) && ! $response['success'] ) {
 			return;
 		}
-		$raw = array();
-		foreach ( $_POST as $k => $v ) { // phpcs:ignore WordPress.Security.NonceVerification
-			if ( is_array( $v ) || 0 === strpos( $k, 'password' ) || false !== strpos( $k, 'confirm' ) ) {
-				continue; // never store passwords.
-			}
-			if ( preg_match( '/^[a-z]+-\d+$/', $k ) ) {
-				$raw[ $k ] = sanitize_text_field( wp_unslash( $v ) );
-			}
-		}
 		$map  = self::field_map();
 		$data = array();
 		foreach ( $map as $name => $field_key ) {
-			$data[ $name ] = isset( $raw[ $field_key ] ) ? $raw[ $field_key ] : '';
+			// Only explicitly mapped fields are ever stored; passwords (text-4/text-5) are never mapped.
+			$data[ $name ] = ( $field_key && isset( $_POST[ $field_key ] ) && ! is_array( $_POST[ $field_key ] ) ) ? sanitize_text_field( wp_unslash( $_POST[ $field_key ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
 		}
 		$title = $data['company'] ?: ( $data['applicant'] ?: 'Application ' . current_time( 'Y-m-d H:i' ) );
 		$id    = wp_insert_post( array( 'post_type' => self::APP, 'post_title' => $title, 'post_status' => 'publish' ) );
@@ -296,20 +288,23 @@ try{new QRCode(document.getElementById('qr'),{text:<?php echo wp_json_encode( $v
 			return;
 		}
 		update_post_meta( $id, 'data', $data );
-		update_post_meta( $id, 'raw', $raw );
 		update_post_meta( $id, 'review', 'pending' );
 		update_post_meta( $id, 'checks', self::run_checks( $data, $id ) );
 	}
 
 	/** Maps our names to Forminator field keys. Editable in PCA Members > Settings. */
+	private static function default_map() {
+		return "applicant=name-1\ncompany=text-1\naddress=address-1-street_address\ncity=text-2\npin=text-3\nemail=email-1\nphone=phone-1\nlicence_no=text-6\nplan=select-3\npayment_mode=select-2\npayment_details=text-7";
+	}
+
 	private static function field_map() {
-		$default = "applicant=name-1\ncompany=text-1\naddress=text-2\ncity=text-3\npin=text-4\nemail=email-1\nphone=phone-1\nlicence_no=text-5\nplan=select-2\npayment_mode=select-1";
-		$lines   = preg_split( '/\r?\n/', (string) get_option( 'pca_field_map', $default ) );
-		$map     = array( 'applicant' => '', 'company' => '', 'address' => '', 'city' => '', 'pin' => '', 'email' => '', 'phone' => '', 'licence_no' => '', 'plan' => '', 'payment_mode' => '' );
+		$lines   = preg_split( '/\r?\n/', (string) get_option( 'pca_field_map', self::default_map() ) );
+		$map     = array( 'applicant' => '', 'company' => '', 'address' => '', 'city' => '', 'pin' => '', 'email' => '', 'phone' => '', 'licence_no' => '', 'plan' => '', 'payment_mode' => '', 'payment_details' => '' );
 		foreach ( $lines as $l ) {
 			$parts = array_map( 'trim', explode( '=', $l, 2 ) );
 			if ( 2 === count( $parts ) && isset( $map[ $parts[0] ] ) ) {
-				$map[ $parts[0] ] = $parts[1];
+				// Hard guard: the join form's password fields must never be stored, whatever the settings say.
+				$map[ $parts[0] ] = in_array( $parts[1], array( 'text-4', 'text-5' ), true ) ? '' : $parts[1];
 			}
 		}
 		return $map;
@@ -432,10 +427,10 @@ try{new QRCode(document.getElementById('qr'),{text:<?php echo wp_json_encode( $v
 			update_option( 'pca_field_map', sanitize_textarea_field( wp_unslash( $_POST['pca_field_map'] ?? '' ) ) );
 			echo '<div class="updated"><p>Saved.</p></div>';
 		}
-		$map = get_option( 'pca_field_map', "applicant=name-1\ncompany=text-1\naddress=text-2\ncity=text-3\npin=text-4\nemail=email-1\nphone=phone-1\nlicence_no=text-5\nplan=select-2\npayment_mode=select-1" );
+		$map = get_option( 'pca_field_map', self::default_map() );
 		echo '<div class="wrap"><h1>PCA Settings</h1><form method="post">';
 		wp_nonce_field( 'pca_settings', 'pca_settings_nonce' );
-		echo '<p><label>Join form ID (Forminator) <input type="number" name="pca_join_form_id" value="' . esc_attr( get_option( 'pca_join_form_id', 0 ) ) . '"></label></p>';
+		echo '<p><label>Join form ID (Forminator) <input type="number" name="pca_join_form_id" value="' . esc_attr( get_option( 'pca_join_form_id', 810 ) ) . '"></label></p>';
 		echo '<p><label>Verify-certificate page ID <input type="number" name="pca_verify_page_id" value="' . esc_attr( get_option( 'pca_verify_page_id', 0 ) ) . '"></label></p>';
 		echo '<p>Field map (our name = Forminator field key, one per line):<br><textarea name="pca_field_map" rows="10" cols="50">' . esc_textarea( $map ) . '</textarea></p>';
 		submit_button();
