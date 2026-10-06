@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PCA Membership
  * Description: Members & committee database, join-form approval queue with automatic checks, and verifiable membership certificates for Pest Control Association.
- * Version: 0.1.0
+ * Version: 0.2.0
  * Author: PCA
  * Text Domain: pca-membership
  */
@@ -27,6 +27,107 @@ final class PCA_Membership {
 		add_action( 'load-edit.php', array( __CLASS__, 'maybe_sync' ) );
 		add_shortcode( 'pca_members', array( __CLASS__, 'sc_members' ) );
 		add_shortcode( 'pca_verify', array( __CLASS__, 'sc_verify' ) );
+		add_shortcode( 'pca_member_form', array( __CLASS__, 'sc_form' ) );
+		add_action( 'admin_post_nopriv_pca_member_submit', array( __CLASS__, 'handle_member_submit' ) );
+		add_action( 'admin_post_pca_member_submit', array( __CLASS__, 'handle_member_submit' ) );
+	}
+
+	/* ---------- Public member-details form (with photo) ---------- */
+
+	public static function sc_form() {
+		if ( isset( $_GET['pca_sent'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+			return '<p><strong>Thank you!</strong> Your details have been received. The association will review them and update the website.</p>';
+		}
+		$err = isset( $_GET['pca_err'] ) ? sanitize_text_field( wp_unslash( $_GET['pca_err'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		ob_start();
+		if ( $err ) {
+			echo '<p style="color:#b00020"><strong>' . esc_html( $err ) . '</strong></p>';
+		}
+		$in = 'style="width:100%;max-width:480px;padding:8px;margin:4px 0 14px"';
+		?>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
+			<input type="hidden" name="action" value="pca_member_submit">
+			<div style="position:absolute;left:-9999px" aria-hidden="true"><label>Leave empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+			<label>I am a *<br><select name="kind" <?php echo $in; // phpcs:ignore ?>><option value="member">Member (company)</option><option value="committee">Committee member</option><option value="region">Region committee member</option></select></label><br>
+			<label>Full name *<br><input type="text" name="name" required <?php echo $in; // phpcs:ignore ?>></label><br>
+			<label>Company name<br><input type="text" name="company" <?php echo $in; // phpcs:ignore ?>></label><br>
+			<label>Position in the association (if any)<br><input type="text" name="position" <?php echo $in; // phpcs:ignore ?>></label><br>
+			<label>Region / City *<br><input type="text" name="city" required <?php echo $in; // phpcs:ignore ?>></label><br>
+			<label>Address<br><input type="text" name="address" <?php echo $in; // phpcs:ignore ?>></label><br>
+			<label>Mobile *<br><input type="tel" name="phone" required <?php echo $in; // phpcs:ignore ?>></label><br>
+			<label>Email *<br><input type="email" name="email" required <?php echo $in; // phpcs:ignore ?>></label><br>
+			<label>Member since (year)<br><input type="text" name="since" maxlength="4" <?php echo $in; // phpcs:ignore ?>></label><br>
+			<label>Pest control licence number<br><input type="text" name="licence_no" <?php echo $in; // phpcs:ignore ?>></label><br>
+			<label>Your photo * (JPG, PNG or WEBP, up to 3 MB)<br><input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required style="margin:4px 0 14px"></label><br>
+			<label><input type="checkbox" name="consent" value="1" required> I agree that my name, company, city and photo may be shown on the association website. *</label><br><br>
+			<button type="submit" style="padding:10px 24px">Submit</button>
+		</form>
+		<?php
+		return ob_get_clean();
+	}
+
+	public static function handle_member_submit() {
+		$back = wp_get_referer() ?: home_url( '/member-update/' );
+		$fail = function ( $msg ) use ( $back ) {
+			wp_safe_redirect( add_query_arg( 'pca_err', rawurlencode( $msg ), remove_query_arg( array( 'pca_err', 'pca_sent' ), $back ) ) );
+			exit;
+		};
+		if ( ! empty( $_POST['website'] ) ) { // honeypot
+			wp_safe_redirect( add_query_arg( 'pca_sent', 1, $back ) );
+			exit;
+		}
+		$ip_key = 'pca_rl_' . md5( isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : 'x' );
+		$count  = (int) get_transient( $ip_key );
+		if ( $count >= 5 ) {
+			$fail( 'Too many submissions from your connection. Please try again later.' );
+		}
+		set_transient( $ip_key, $count + 1, HOUR_IN_SECONDS );
+
+		$g    = function ( $k ) {
+			return isset( $_POST[ $k ] ) ? sanitize_text_field( wp_unslash( $_POST[ $k ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		};
+		$kind = in_array( $g( 'kind' ), array( 'member', 'committee', 'region' ), true ) ? $g( 'kind' ) : 'member';
+		$name = $g( 'name' );
+		if ( '' === $name || '' === $g( 'city' ) || ! is_email( $g( 'email' ) ) || ! preg_match( '/^\+?[0-9 \-]{10,15}$/', $g( 'phone' ) ) ) {
+			$fail( 'Please fill the required fields with a valid email and mobile number.' );
+		}
+		if ( empty( $_POST['consent'] ) ) {
+			$fail( 'Please tick the consent box.' );
+		}
+		if ( empty( $_FILES['photo']['name'] ) || ! empty( $_FILES['photo']['error'] ) || $_FILES['photo']['size'] > 3 * MB_IN_BYTES ) {
+			$fail( 'Please attach a photo (JPG, PNG or WEBP, up to 3 MB).' );
+		}
+		require_once ABSPATH . 'wp-admin/includes/file.php';
+		require_once ABSPATH . 'wp-admin/includes/image.php';
+		require_once ABSPATH . 'wp-admin/includes/media.php';
+		$up = wp_handle_upload( $_FILES['photo'], array( // phpcs:ignore
+			'test_form' => false,
+			'mimes'     => array( 'jpg|jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp' ),
+		) );
+		if ( ! empty( $up['error'] ) || empty( $up['file'] ) ) {
+			$fail( 'The photo could not be uploaded. Please use a JPG, PNG or WEBP image.' );
+		}
+		$pid = wp_insert_post( array( 'post_type' => self::MEMBER, 'post_title' => $name, 'post_status' => 'publish' ) );
+		if ( is_wp_error( $pid ) ) {
+			$fail( 'Something went wrong. Please try again.' );
+		}
+		$att = wp_insert_attachment( array( 'post_mime_type' => $up['type'], 'post_title' => $name, 'post_status' => 'inherit' ), $up['file'], $pid );
+		if ( $att && ! is_wp_error( $att ) ) {
+			wp_update_attachment_metadata( $att, wp_generate_attachment_metadata( $att, $up['file'] ) );
+			set_post_thumbnail( $pid, $att );
+		}
+		$set = array(
+			'kind' => $kind, 'status' => 'pending', 'position' => $g( 'position' ), 'region' => 'region' === $kind ? $g( 'city' ) : '',
+			'proprietor' => $name, 'company' => $g( 'company' ), 'address' => $g( 'address' ), 'city' => $g( 'city' ),
+			'phone' => $g( 'phone' ), 'email' => $g( 'email' ), 'since' => preg_replace( '/\D/', '', $g( 'since' ) ),
+			'licence_no' => $g( 'licence_no' ), 'show_contact' => '0',
+		);
+		foreach ( $set as $k => $v ) {
+			update_post_meta( $pid, $k, $v );
+		}
+		wp_mail( get_option( 'admin_email' ), 'New member details submitted: ' . $name, "A member submitted their details with a photo.\nReview and set Active: " . admin_url( 'post.php?post=' . $pid . '&action=edit' ) );
+		wp_safe_redirect( add_query_arg( 'pca_sent', 1, remove_query_arg( array( 'pca_err', 'pca_sent' ), $back ) ) );
+		exit;
 	}
 
 	/* ---------- Post types ---------- */
@@ -37,7 +138,7 @@ final class PCA_Membership {
 			'public'       => false,
 			'show_ui'      => true,
 			'menu_icon'    => 'dashicons-groups',
-			'supports'     => array( 'title' ),
+			'supports'     => array( 'title', 'thumbnail' ),
 			'capability_type' => 'post',
 		) );
 		register_post_type( self::APP, array(
@@ -56,7 +157,7 @@ final class PCA_Membership {
 	private static function member_fields() {
 		return array(
 			'kind'        => array( 'Entry type', 'select', array( 'member' => 'Active member company', 'committee' => 'Committee member', 'region' => 'Region committee' ) ),
-			'status'      => array( 'Status', 'select', array( 'active' => 'Active', 'left' => 'Left / inactive' ) ),
+			'status'      => array( 'Status', 'select', array( 'active' => 'Active', 'pending' => 'Pending review', 'left' => 'Left / inactive' ) ),
 			'position'    => array( 'Position (committee only)', 'text' ),
 			'region'      => array( 'Region (region committee only)', 'text' ),
 			'proprietor'  => array( 'Proprietor / person name', 'text' ),
@@ -147,6 +248,9 @@ final class PCA_Membership {
 				return (string) get_post_meta( $p->ID, $k, true );
 			};
 			echo '<div class="pca-card" style="border:1px solid #ddd;border-radius:8px;padding:16px;background:#fff">';
+			if ( has_post_thumbnail( $p ) ) {
+				echo get_the_post_thumbnail( $p, 'medium', array( 'style' => 'width:96px;height:96px;object-fit:cover;border-radius:50%;display:block;margin-bottom:8px', 'loading' => 'lazy' ) );
+			}
 			if ( 'member' === $atts['kind'] ) {
 				echo '<strong>' . esc_html( $m( 'company' ) ?: $p->post_title ) . '</strong><br>';
 				echo esc_html( $m( 'proprietor' ) ) . '<br>';
