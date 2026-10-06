@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PCA Membership
  * Description: Members & committee database, join-form approval queue with automatic checks, and verifiable membership certificates for Pest Control Association.
- * Version: 0.2.0
+ * Version: 0.3.0
  * Author: PCA
  * Text Domain: pca-membership
  */
@@ -27,9 +27,53 @@ final class PCA_Membership {
 		add_action( 'load-edit.php', array( __CLASS__, 'maybe_sync' ) );
 		add_shortcode( 'pca_members', array( __CLASS__, 'sc_members' ) );
 		add_shortcode( 'pca_verify', array( __CLASS__, 'sc_verify' ) );
+		add_action( 'wp_head', array( __CLASS__, 'ux_css' ), 99 );
+		add_action( 'wp_footer', array( __CLASS__, 'ux_js' ), 99 );
 		add_shortcode( 'pca_member_form', array( __CLASS__, 'sc_form' ) );
 		add_action( 'admin_post_nopriv_pca_member_submit', array( __CLASS__, 'handle_member_submit' ) );
 		add_action( 'admin_post_pca_member_submit', array( __CLASS__, 'handle_member_submit' ) );
+	}
+
+	/* ---------- Front-end usability tweaks (remove by deactivating the plugin) ---------- */
+
+	public static function ux_css() {
+		?>
+<style id="pca-ux">
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #f5a623;outline-offset:2px}
+/* Forms: 16px text stops iOS zoom, 44px targets, never wider than the card */
+.forminator-ui *,.pca-form-wrap *{box-sizing:border-box}
+.forminator-ui input:not([type=checkbox]):not([type=radio]):not([type=file]),.forminator-ui select,.forminator-ui textarea{font-size:16px!important;min-height:44px;max-width:100%}
+.forminator-ui.forminator-custom-form{width:100%!important;max-width:100%!important}
+.forminator-ui .forminator-button-submit{min-height:48px;font-size:16px}
+.pca-grid .pca-card img{box-shadow:0 1px 4px rgba(0,0,0,.15)}
+@media (max-width:767px){
+ .forminator-ui.forminator-custom-form{padding-left:12px!important;padding-right:12px!important}
+ footer a,.elementor-location-footer a{display:inline-block;padding:8px 0}
+ .elementor-widget-text-editor,.elementor-widget-text-editor p,.elementor-heading-title{hyphens:auto}
+}
+</style>
+		<?php
+	}
+
+	public static function ux_js() {
+		?>
+<script id="pca-ux-js">
+(function(){
+ try{
+  var small=window.matchMedia('(max-width:767px)').matches;
+  if(small){ /* justified text leaves big gaps on phones */
+   document.querySelectorAll('.elementor p,.elementor h1,.elementor h2,.elementor h3,.elementor .elementor-heading-title,.elementor .elementor-widget-container').forEach(function(el){
+    if(getComputedStyle(el).textAlign==='justify'){el.style.textAlign='left';}
+   });
+  }
+  document.querySelectorAll('img:not([alt])').forEach(function(i){i.setAttribute('alt','Pest Control Association');});
+  document.querySelectorAll('input[placeholder*="Wallaby"]').forEach(function(i){i.setAttribute('placeholder','Shop / flat no, street, area');});
+ }catch(e){}
+})();
+</script>
+		<?php
 	}
 
 	/* ---------- Public member-details form (with photo) ---------- */
