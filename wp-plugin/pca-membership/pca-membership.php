@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PCA Membership
  * Description: Members & committee database, join-form approval queue with automatic checks, and verifiable membership certificates for Pest Control Association.
- * Version: 0.3.0
+ * Version: 0.4.0
  * Author: PCA
  * Text Domain: pca-membership
  */
@@ -27,11 +27,38 @@ final class PCA_Membership {
 		add_action( 'load-edit.php', array( __CLASS__, 'maybe_sync' ) );
 		add_shortcode( 'pca_members', array( __CLASS__, 'sc_members' ) );
 		add_shortcode( 'pca_verify', array( __CLASS__, 'sc_verify' ) );
+		add_action( 'template_redirect', array( __CLASS__, 'start_html_fixes' ), 20 );
 		add_action( 'wp_head', array( __CLASS__, 'ux_css' ), 99 );
 		add_action( 'wp_footer', array( __CLASS__, 'ux_js' ), 99 );
 		add_shortcode( 'pca_member_form', array( __CLASS__, 'sc_form' ) );
 		add_action( 'admin_post_nopriv_pca_member_submit', array( __CLASS__, 'handle_member_submit' ) );
 		add_action( 'admin_post_pca_member_submit', array( __CLASS__, 'handle_member_submit' ) );
+	}
+
+	/* ---------- Output fixes: typos + a proper H1 (applied when the page is sent; stored content is untouched) ---------- */
+
+	public static function start_html_fixes() {
+		if ( is_admin() || is_feed() || wp_doing_ajax() || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
+			return;
+		}
+		ob_start( array( __CLASS__, 'fix_html' ) );
+	}
+
+	public static function fix_html( $html ) {
+		if ( false === stripos( $html, '<html' ) ) {
+			return $html;
+		}
+		$html = str_replace(
+			array( 'techicans', 'Gallary', 'Advicer', 'Co- ordinator', 'Pest Contro Services' ),
+			array( 'technicians', 'Gallery', 'Adviser', 'Co-ordinator', 'Pest Control Services' ),
+			$html
+		);
+		$html = preg_replace( "/Email I(?:'|&#8217;|&#039;|&rsquo;|\xE2\x80\x99)d/u", 'Email ID', $html );
+		$html = preg_replace( '/Copyrights\s*(?:©|&copy;|&#169;)\s*23\b/u', 'Copyright &copy; 2023&ndash;' . gmdate( 'Y' ), $html );
+		if ( is_front_page() && false === stripos( $html, '<h1' ) ) {
+			$html = preg_replace( '/<h2([^>]*)>(\s*Providing\s+Education.*?)<\/h2>/s', '<h1$1>$2</h1>', $html, 1 );
+		}
+		return $html;
 	}
 
 	/* ---------- Front-end usability tweaks (remove by deactivating the plugin) ---------- */
@@ -51,6 +78,7 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,te
 @media (max-width:767px){
  .forminator-ui.forminator-custom-form{padding-left:12px!important;padding-right:12px!important}
  footer a,.elementor-location-footer a{display:inline-block;padding:8px 0}
+ .chaty-tooltip,.chaty-tooltip.active{display:none!important}
  .elementor-widget-text-editor,.elementor-widget-text-editor p,.elementor-heading-title{hyphens:auto}
 }
 </style>
