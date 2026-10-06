@@ -56,7 +56,7 @@ final class PCA_Membership {
 		// Each regex step keeps the previous result if it fails (preg_* returns null on error).
 		$steps = array(
 			array( "/Email I(?:'|&#8217;|&#039;|&rsquo;|’)d/u", 'Email ID', -1 ),
-			array( '/Copyrights\s*(?:©|&copy;|&#169;)\s*23b/u', 'Copyright &copy; 2023&ndash;' . gmdate( 'Y' ), -1 ),
+			array( '/Copyrights\s*(?:©|&copy;|&#169;)\s*23\b/u', 'Copyright &copy; 2023&ndash;' . gmdate( 'Y' ), -1 ),
 		);
 		if ( is_front_page() && false === stripos( $out, '<h1' ) ) {
 			$steps[] = array( '/<h2([^>]*)>(\s*Providing\s+Education.*?)<\/h2>/s', '<h1$1>$2</h1>', 1 );
