@@ -48,17 +48,26 @@ final class PCA_Membership {
 		if ( false === stripos( $html, '<html' ) ) {
 			return $html;
 		}
-		$html = str_replace(
+		$out = str_replace(
 			array( 'techicans', 'Gallary', 'Advicer', 'Co- ordinator', 'Pest Contro Services' ),
 			array( 'technicians', 'Gallery', 'Adviser', 'Co-ordinator', 'Pest Control Services' ),
 			$html
 		);
-		$html = preg_replace( "/Email I(?:'|&#8217;|&#039;|&rsquo;|\xE2\x80\x99)d/u", 'Email ID', $html );
-		$html = preg_replace( '/Copyrights\s*(?:©|&copy;|&#169;)\s*23\b/u', 'Copyright &copy; 2023&ndash;' . gmdate( 'Y' ), $html );
-		if ( is_front_page() && false === stripos( $html, '<h1' ) ) {
-			$html = preg_replace( '/<h2([^>]*)>(\s*Providing\s+Education.*?)<\/h2>/s', '<h1$1>$2</h1>', $html, 1 );
+		// Each regex step keeps the previous result if it fails (preg_* returns null on error).
+		$steps = array(
+			array( "/Email I(?:'|&#8217;|&#039;|&rsquo;|â)d/u", 'Email ID', -1 ),
+			array( '/Copyrights\s*(?:©|&copy;|&#169;)\s*23/u', 'Copyright &copy; 2023&ndash;' . gmdate( 'Y' ), -1 ),
+		);
+		if ( is_front_page() && false === stripos( $out, '<h1' ) ) {
+			$steps[] = array( '/<h2([^>]*)>(\s*Providing\s+Education.*?)<\/h2>/s', '<h1$1>$2</h1>', 1 );
 		}
-		return $html;
+		foreach ( $steps as $st ) {
+			$r = preg_replace( $st[0], $st[1], $out, $st[2] );
+			if ( null !== $r ) {
+				$out = $r;
+			}
+		}
+		return $out;
 	}
 
 	/* ---------- Front-end usability tweaks (remove by deactivating the plugin) ---------- */
